@@ -1,7 +1,7 @@
 {
   "name": "Wake on Controller",
   "version": "1.0.0",
-  "author": "you",
+  "author": "steve133t",
   "flags": [],
   "description": "Wake your Steam Deck from sleep by pressing the Xbox button on your Bluetooth controller — just like an Xbox console.",
   "tags": ["utilities", "controller", "bluetooth", "couch gaming"]
