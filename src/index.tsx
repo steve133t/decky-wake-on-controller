@@ -14,10 +14,11 @@ import { FaGamepad } from "react-icons/fa";
 
 // ── Backend callables ─────────────────────────────────────────────────────────
 
-const initialize    = callable<[], StatusResult>("initialize");
-const getStatus     = callable<[], StatusResult>("get_status");
-const setEnabled    = callable<[boolean], { success: boolean }>("set_enabled");
-const testReconnect = callable<[], { success: boolean }>("test_reconnect");
+const initialize          = callable<[], StatusResult>("initialize");
+const getStatus           = callable<[], StatusResult>("get_status");
+const setEnabled          = callable<[boolean], { success: boolean }>("set_enabled");
+const testReconnect       = callable<[], { success: boolean }>("test_reconnect");
+const refreshWakeDevices  = callable<[], { success: boolean; status: StatusResult }>("refresh_wake_devices");
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -44,6 +45,7 @@ const WakeOnControllerPanel: FC = () => {
   const [loading, setLoading] = useState(true);
   const [toggling, setToggling] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   const refresh = async () => {
     const s = await getStatus();
@@ -74,6 +76,14 @@ const WakeOnControllerPanel: FC = () => {
     await testReconnect();
     await refresh();
     setReconnecting(false);
+  };
+
+  const handleRefreshWakeDevices = async () => {
+    setRefreshing(true);
+    const result = await refreshWakeDevices();
+    // Result already includes updated status — apply it directly
+    if (result.status) setStatus(result.status);
+    setRefreshing(false);
   };
 
   if (loading || !status) {
@@ -170,6 +180,15 @@ const WakeOnControllerPanel: FC = () => {
           ))
         )}
 
+        <PanelSectionRow>
+          <ButtonItem
+            layout="below"
+            disabled={refreshing || !status.enabled}
+            onClick={handleRefreshWakeDevices}
+          >
+            {refreshing ? "Refreshing..." : "Refresh Wake Devices"}
+          </ButtonItem>
+        </PanelSectionRow>
         <PanelSectionRow>
           <ButtonItem
             layout="below"

@@ -146,6 +146,15 @@ class Plugin:
     async def get_paired_controllers(self) -> list[dict]:
         return await self._list_xbox_controllers(self)
 
+    async def refresh_wake_devices(self) -> dict:
+        """
+        Re-scan paired controllers and re-register them immediately.
+        Useful after pairing a new controller without needing to toggle
+        the plugin off and on or wait for the next suspend.
+        """
+        ok = await self._register_devices_for_wake(self)
+        return {"success": ok, "status": await self.get_status(self)}
+
     async def test_reconnect(self) -> dict:
         ok = await self._reconnect_controller(self)
         return {"success": ok}
