@@ -1,2 +1,2 @@
-const deckyPlugin = require("@decky/rollup");
-module.exports = deckyPlugin();
+import deckyPlugin from "@decky/rollup";
+export default deckyPlugin();
