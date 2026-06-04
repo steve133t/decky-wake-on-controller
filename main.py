@@ -14,7 +14,8 @@ BT_ADAPTER = "hci0"
 
 XBOX_BT_NAMES = ["Xbox Wireless Controller", "Xbox Controller", "Microsoft Xbox Controller"]
 
-SETTINGS_PATH = Path("/home/deck/.config/wake-on-controller/settings.json")
+SETTINGS_PATH     = Path("/home/deck/.config/wake-on-controller/settings.json")
+WAKE_DEVICES_PATH = Path("/home/deck/.config/wake-on-controller/wake-devices.txt")
 
 # Embedded sudoers rules — written once on first load.
 # On SteamOS the deck user already has NOPASSWD:ALL, so we can bootstrap this
@@ -27,6 +28,8 @@ deck ALL=(root) NOPASSWD: /usr/bin/tee /usr/lib/systemd/system-sleep/wake-on-con
 deck ALL=(root) NOPASSWD: /bin/rm -f /usr/lib/systemd/system-sleep/wake-on-controller.sh
 deck ALL=(root) NOPASSWD: /bin/chmod +x /usr/lib/systemd/system-sleep/wake-on-controller.sh
 deck ALL=(root) NOPASSWD: /usr/bin/btmgmt wake-system *
+deck ALL=(root) NOPASSWD: /usr/bin/btmgmt add-device *
+deck ALL=(root) NOPASSWD: /usr/bin/btmgmt del-device *
 """
 
 
@@ -77,11 +80,13 @@ class Plugin:
         logger.info("WakeOnController: suspend hook — re-arming BT wake")
         if await self.get_enabled(self):
             await self._apply_bt_wake(self, enable=True)
+            await self._register_devices_for_wake(self)
 
     async def _on_resume(self):
-        """After wake: try to reconnect the controller."""
+        """After wake: reconnect controller and clear wake scan list."""
         logger.info("WakeOnController: resume hook — reconnecting controller")
         if await self.get_enabled(self):
+            await self._unregister_devices_for_wake(self)
             await self._reconnect_controller(self)
 
     # ------------------------------------------------------------------ #
@@ -107,7 +112,9 @@ class Plugin:
         ok = await self._apply_bt_wake(self, enable=enabled)
         if enabled and ok:
             await self._install_sleep_hook(self)
+            await self._register_devices_for_wake(self)
         elif not enabled:
+            await self._unregister_devices_for_wake(self)
             await self._remove_sleep_hook(self)
         return {"success": ok}
 
@@ -133,6 +140,7 @@ class Plugin:
             "power_control": power_ctrl,
             "controllers": controllers,
             "sleep_hook_installed": os.path.exists(SLEEP_HOOK_PATH),
+            "wake_devices_registered": WAKE_DEVICES_PATH.exists() and WAKE_DEVICES_PATH.stat().st_size > 0,
         }
 
     async def get_paired_controllers(self) -> list[dict]:
@@ -196,6 +204,60 @@ class Plugin:
             return True
         return await self._install_sleep_hook(self)
 
+    async def _register_devices_for_wake(self) -> bool:
+        """
+        Tell the BT adapter to actively scan for each paired Xbox controller
+        during suspend and wake the system when it sees one.
+
+        Two steps:
+          1. btmgmt add-device -a 0x01 -A 0x02 <mac>
+             Registers the MAC as an LE (BLE) auto-connect target.
+             When the Xbox button is pressed the controller broadcasts a BLE
+             advertisement; the adapter sees it and raises a wakeup interrupt.
+          2. Save the MAC list to a file so the sleep hook bash script can
+             re-register them on every suspend without needing Python running.
+        """
+        controllers = await self._list_xbox_controllers(self)
+        if not controllers:
+            logger.warning("WakeOnController: no Xbox controllers found to register for wake")
+            return False
+
+        macs = [c["mac"] for c in controllers]
+
+        # Persist MACs for the sleep hook script
+        WAKE_DEVICES_PATH.parent.mkdir(parents=True, exist_ok=True)
+        WAKE_DEVICES_PATH.write_text("\n".join(macs) + "\n")
+
+        success = False
+        for mac in macs:
+            # 0x01 = LE Public address type  (BLE advertisement from Xbox button press)
+            # 0x02 = auto-connect action     (kernel wakes system when device is seen)
+            r = _run_root(["btmgmt", "add-device", "-a", "0x01", "-A", "0x02", mac])
+            if r.returncode == 0:
+                logger.info(f"WakeOnController: registered {mac} for BLE wake scan")
+                success = True
+            else:
+                logger.warning(f"WakeOnController: btmgmt add-device failed for {mac}: {r.stderr.strip()}")
+
+        return success
+
+    async def _unregister_devices_for_wake(self) -> None:
+        """
+        Remove controllers from the BT auto-connect/wake list after the system
+        has already woken up — keeps the adapter from scanning unnecessarily
+        while the Deck is in active use.
+        """
+        if not WAKE_DEVICES_PATH.exists():
+            return
+
+        for mac in WAKE_DEVICES_PATH.read_text().splitlines():
+            mac = mac.strip()
+            if mac:
+                _run_root(["btmgmt", "del-device", mac])
+
+        WAKE_DEVICES_PATH.unlink(missing_ok=True)
+        logger.info("WakeOnController: unregistered wake devices after resume")
+
     async def _apply_bt_wake(self, enable: bool) -> bool:
         adapter_path = _adapter_sysfs_path()
         if not adapter_path:
@@ -225,13 +287,36 @@ class Plugin:
         """
         script = """#!/bin/bash
 # Installed by the Wake on Controller Decky plugin
-# Re-arms Bluetooth wakeup before each suspend
+# Runs before every suspend to keep the BT adapter armed for wake.
+#
+# Why this exists: power management can reset the sysfs wakeup flags when
+# the system suspends, so we re-apply them here at the last moment before
+# the system actually goes to sleep. We also re-register each paired Xbox
+# controller so the adapter actively scans for the BLE advertisement that
+# the controller sends when the Xbox button is pressed.
+
+SYSFS="/sys/class/bluetooth/hci0/device"
+WAKE_DEVICES="/home/deck/.config/wake-on-controller/wake-devices.txt"
+
 case "$1" in
   pre)
-    SYSFS="/sys/class/bluetooth/hci0/device"
+    # 1. Keep adapter powered and mark it as a wakeup source
     if [ -d "$SYSFS" ]; then
       echo enabled > "$SYSFS/power/wakeup"
       echo on      > "$SYSFS/power/control"
+    fi
+
+    # 2. Allow the adapter to wake the system
+    btmgmt wake-system on
+
+    # 3. Register each paired controller for active BLE wake scanning
+    #    -a 0x01 = LE Public address (the type Xbox controllers advertise on)
+    #    -A 0x02 = auto-connect action (triggers wakeup when advertisement seen)
+    if [ -f "$WAKE_DEVICES" ]; then
+      while IFS= read -r mac; do
+        [ -z "$mac" ] && continue
+        btmgmt add-device -a 0x01 -A 0x02 "$mac"
+      done < "$WAKE_DEVICES"
     fi
     ;;
 esac

@@ -34,6 +34,7 @@ interface StatusResult {
   power_control: string;
   controllers: Controller[];
   sleep_hook_installed: boolean;
+  wake_devices_registered: boolean;
 }
 
 // ── Main panel component ──────────────────────────────────────────────────────
@@ -126,6 +127,18 @@ const WakeOnControllerPanel: FC = () => {
             }
           >
             <StatusDot active={status.sleep_hook_installed} />
+          </Field>
+        </PanelSectionRow>
+        <PanelSectionRow>
+          <Field
+            label="BLE Wake Scan"
+            description={
+              status.wake_devices_registered
+                ? "✓ Controller registered — adapter will scan for it during sleep"
+                : "✗ No controller registered — pair one and enable wake above"
+            }
+          >
+            <StatusDot active={status.wake_devices_registered} />
           </Field>
         </PanelSectionRow>
         <PanelSectionRow>
