@@ -12,7 +12,10 @@ SLEEP_HOOK_PATH = "/usr/lib/systemd/system-sleep/wake-on-controller.sh"
 SUDOERS_PATH = "/etc/sudoers.d/wake-on-controller"
 BT_ADAPTER = "hci0"
 
-XBOX_BT_NAMES = ["Xbox Wireless Controller", "Xbox Controller", "Microsoft Xbox Controller"]
+# Any BT device that bluez classifies as a gaming input is eligible.
+# bluetoothctl sets Icon: input-gaming for gamepads based on HID device class —
+# this covers Xbox, DualSense, Switch Pro, 8BitDo, Steam Controller, etc.
+BT_GAMEPAD_ICON = "input-gaming"
 
 SETTINGS_PATH     = Path("/home/deck/.config/wake-on-controller/settings.json")
 WAKE_DEVICES_PATH = Path("/home/deck/.config/wake-on-controller/wake-devices.txt")
@@ -131,7 +134,7 @@ class Plugin:
             except Exception:
                 pass
 
-        controllers = await self._list_xbox_controllers(self)
+        controllers = await self._list_bt_controllers(self)
 
         return {
             "enabled": await self.get_enabled(self),
@@ -144,7 +147,7 @@ class Plugin:
         }
 
     async def get_paired_controllers(self) -> list[dict]:
-        return await self._list_xbox_controllers(self)
+        return await self._list_bt_controllers(self)
 
     async def refresh_wake_devices(self) -> dict:
         """
@@ -226,7 +229,7 @@ class Plugin:
           2. Save the MAC list to a file so the sleep hook bash script can
              re-register them on every suspend without needing Python running.
         """
-        controllers = await self._list_xbox_controllers(self)
+        controllers = await self._list_bt_controllers(self)
         if not controllers:
             logger.warning("WakeOnController: no Xbox controllers found to register for wake")
             return False
@@ -353,8 +356,12 @@ esac
             return result.returncode == 0
         return True
 
-    async def _list_xbox_controllers(self) -> list[dict]:
-        """Return paired BT devices that look like Xbox controllers."""
+    async def _list_bt_controllers(self) -> list[dict]:
+        """
+        Return all paired BT devices that bluez classifies as gaming input.
+        Uses the Icon field from `bluetoothctl info` which is derived from the
+        HID device class — covers Xbox, DualSense, Switch Pro, 8BitDo, etc.
+        """
         try:
             result = _run(["bluetoothctl", "devices"])
             controllers = []
@@ -363,13 +370,13 @@ esac
                 parts = line.strip().split(" ", 2)
                 if len(parts) < 3:
                     continue
-                mac = parts[1]
+                mac  = parts[1]
                 name = parts[2]
-                if any(n.lower() in name.lower() for n in XBOX_BT_NAMES):
-                    # Check if currently connected
-                    info = _run(["bluetoothctl", "info", mac], check=False)
-                    connected = "Connected: yes" in info.stdout
-                    controllers.append({"mac": mac, "name": name, "connected": connected})
+                info = _run(["bluetoothctl", "info", mac], check=False)
+                if f"Icon: {BT_GAMEPAD_ICON}" not in info.stdout:
+                    continue
+                connected = "Connected: yes" in info.stdout
+                controllers.append({"mac": mac, "name": name, "connected": connected})
             return controllers
         except Exception as e:
             logger.error(f"WakeOnController: error listing controllers: {e}")
@@ -377,7 +384,7 @@ esac
 
     async def _reconnect_controller(self) -> bool:
         """After wake, tell bluetoothctl to connect known Xbox controllers."""
-        controllers = await self._list_xbox_controllers(self)
+        controllers = await self._list_bt_controllers(self)
         if not controllers:
             return False
         success = False

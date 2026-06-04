@@ -3,6 +3,6 @@
   "version": "1.0.0",
   "author": "steve133t",
   "flags": [],
-  "description": "Wake your Steam Deck from sleep by pressing the Xbox button on your Bluetooth controller — just like an Xbox console.",
+  "description": "Wake your Steam Deck from sleep by pressing the home button on any Bluetooth controller — Xbox, DualSense, Switch Pro, 8BitDo, and more.",
   "tags": ["utilities", "controller", "bluetooth", "couch gaming"]
 }

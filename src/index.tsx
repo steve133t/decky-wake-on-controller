@@ -104,7 +104,7 @@ const WakeOnControllerPanel: FC = () => {
         <PanelSectionRow>
           <ToggleField
             label="Enable BT Wake"
-            description="Wake the Steam Deck by pressing the Xbox button on your controller"
+            description="Wake the Steam Deck by pressing the home button on your Bluetooth controller"
             checked={status.enabled}
             disabled={toggling || !status.adapter_found}
             onChange={handleToggle}
@@ -163,8 +163,8 @@ const WakeOnControllerPanel: FC = () => {
         {status.controllers.length === 0 ? (
           <PanelSectionRow>
             <Field
-              label="No Xbox controllers paired"
-              description="Pair your Xbox controller in Steam's BT settings first, then come back here"
+              label="No controllers detected"
+              description="Pair a BT controller in Steam's BT settings first, then come back here. Works with Xbox, DualSense, Switch Pro, 8BitDo, and any other BT gamepad."
             />
           </PanelSectionRow>
         ) : (
