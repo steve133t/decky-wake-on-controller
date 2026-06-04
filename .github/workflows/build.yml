@@ -3,22 +3,26 @@ name: Build and Release
 on:
   push:
     tags:
-      - "v*"          # triggers on: git tag v1.0.0 && git push --tags
-  workflow_dispatch:  # allows manual trigger from GitHub Actions tab
+      - "v*"
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/steamdeckhomebrew/holo-toolchain:latest
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install pnpm
+      - name: Setup pnpm
         uses: pnpm/action-setup@v3
         with:
           version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: "pnpm"
 
       - name: Install JS dependencies
         run: pnpm install
@@ -30,12 +34,11 @@ jobs:
         run: |
           PLUGIN_NAME="wake-on-controller"
           mkdir -p "dist-zip/${PLUGIN_NAME}"
-          cp -r dist            "dist-zip/${PLUGIN_NAME}/"
-          cp    main.py         "dist-zip/${PLUGIN_NAME}/"
-          cp    plugin.json     "dist-zip/${PLUGIN_NAME}/"
+          cp -r dist        "dist-zip/${PLUGIN_NAME}/"
+          cp    main.py     "dist-zip/${PLUGIN_NAME}/"
+          cp    plugin.json "dist-zip/${PLUGIN_NAME}/"
           cd dist-zip
           zip -r "../${PLUGIN_NAME}.zip" "${PLUGIN_NAME}/"
-          echo "Built $(du -sh ../${PLUGIN_NAME}.zip | cut -f1) zip"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
