@@ -390,7 +390,7 @@ esac
                     continue
                 mac  = parts[1]
                 name = parts[2]
-                info = _run(["bluetoothctl", "info", mac], check=False)
+                info = _run(["bluetoothctl", "info", mac], check=False, timeout=3)
                 if f"Icon: {BT_GAMEPAD_ICON}" not in info.stdout:
                     continue
                 connected = "Connected: yes" in info.stdout

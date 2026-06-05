@@ -48,34 +48,25 @@ interface StatusResult {
 
 const WakeOnControllerPanel: FC = () => {
   const [status, setStatus] = useState<StatusResult | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [dataLoading, setDataLoading] = useState(true); // true only while first fetch is in-flight
   const [toggling, setToggling] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
   const refresh = async () => {
-    const s = await getStatus();
-    setStatus(s);
-    setLoading(false);
+    try {
+      const s = await getStatus();
+      setStatus(s);
+    } catch (_) {}
+    setDataLoading(false);
   };
 
   useEffect(() => {
-    // initialize() sets up sudoers + sleep hook then returns status in one call.
-    // If it hangs or fails for any reason, fall back to a plain getStatus().
-    const initTimeout = setTimeout(() => {
-      if (loading) refresh(); // safety net: force-load after 6s if still spinning
-    }, 6000);
-
+    // Run initialize() in the background (sets up sudoers + sleep hook).
+    // The panel renders immediately — data fills in when the call returns.
     initialize()
-      .then((s) => {
-        clearTimeout(initTimeout);
-        setStatus(s);
-        setLoading(false);
-      })
-      .catch(() => {
-        clearTimeout(initTimeout);
-        refresh();
-      });
+      .then((s) => { setStatus(s); setDataLoading(false); })
+      .catch(() => refresh());
 
     const interval = setInterval(refresh, 5000);
     return () => clearInterval(interval);
@@ -103,32 +94,39 @@ const WakeOnControllerPanel: FC = () => {
     setRefreshing(false);
   };
 
-  if (loading || !status) {
-    return (
-      <PanelSection>
-        <PanelSectionRow>
-          <div style={{ display: "flex", justifyContent: "center", padding: "20px" }}>
-            <Spinner />
-          </div>
-        </PanelSectionRow>
-      </PanelSection>
-    );
-  }
+  // Derive safe display values — show defaults while data is loading
+  const enabled   = status?.enabled ?? false;
+  const adapterOk = status?.adapter_found ?? false;
+  const wakeArmed = status?.wakeup_armed ?? false;
+  const hookOk    = status?.sleep_hook_installed ?? false;
+  const devicesOk = status?.wake_devices_registered ?? false;
+  const powerCtrl = status?.power_control ?? "—";
+  const controllers = status?.controllers ?? [];
 
   return (
     <>
+      {dataLoading && (
+        <PanelSection>
+          <PanelSectionRow>
+            <Field label="" description="Loading status…">
+              <Spinner />
+            </Field>
+          </PanelSectionRow>
+        </PanelSection>
+      )}
+
       <PanelSection title="Wake on Controller">
         <PanelSectionRow>
           <ToggleField
             label="Enable BT Wake"
             description="Wake the Steam Deck by pressing the home button on your Bluetooth controller"
-            checked={status.enabled}
-            disabled={toggling || !status.adapter_found}
+            checked={enabled}
+            disabled={toggling || !adapterOk || dataLoading}
             onChange={handleToggle}
           />
         </PanelSectionRow>
 
-        {!status.adapter_found && (
+        {!adapterOk && !dataLoading && (
           <PanelSectionRow>
             <Field label="" description="⚠ Bluetooth adapter not found at /sys/class/bluetooth/hci0" />
           </PanelSectionRow>
@@ -139,53 +137,46 @@ const WakeOnControllerPanel: FC = () => {
         <PanelSectionRow>
           <Field
             label="BT Wake Armed"
-            description={status.wakeup_armed ? "✓ Wakeup source is active" : "✗ Not armed — toggle on above"}
+            description={wakeArmed ? "✓ Wakeup source is active" : "✗ Not armed — toggle on above"}
           >
-            <StatusDot active={status.wakeup_armed} />
+            <StatusDot active={wakeArmed} />
           </Field>
         </PanelSectionRow>
         <PanelSectionRow>
           <Field
             label="Sleep Hook"
-            description={
-              status.sleep_hook_installed
-                ? "✓ Re-arms on every suspend"
-                : "✗ Not installed"
-            }
+            description={hookOk ? "✓ Re-arms on every suspend" : "✗ Not installed"}
           >
-            <StatusDot active={status.sleep_hook_installed} />
+            <StatusDot active={hookOk} />
           </Field>
         </PanelSectionRow>
         <PanelSectionRow>
           <Field
             label="BLE Wake Scan"
             description={
-              status.wake_devices_registered
+              devicesOk
                 ? "✓ Controller registered — adapter will scan for it during sleep"
                 : "✗ No controller registered — pair one and enable wake above"
             }
           >
-            <StatusDot active={status.wake_devices_registered} />
+            <StatusDot active={devicesOk} />
           </Field>
         </PanelSectionRow>
         <PanelSectionRow>
-          <Field
-            label="BT Power Mode"
-            description={`Adapter power control: ${status.power_control}`}
-          />
+          <Field label="BT Power Mode" description={`Adapter power control: ${powerCtrl}`} />
         </PanelSectionRow>
       </PanelSection>
 
       <PanelSection title="Controllers">
-        {status.controllers.length === 0 ? (
+        {controllers.length === 0 ? (
           <PanelSectionRow>
             <Field
-              label="No controllers detected"
-              description="Pair a BT controller in Steam's BT settings first, then come back here. Works with Xbox, DualSense, Switch Pro, 8BitDo, and any other BT gamepad."
+              label={dataLoading ? "Detecting controllers…" : "No controllers detected"}
+              description={dataLoading ? "" : "Pair a BT controller in Steam's BT settings first. Works with Xbox, DualSense, Switch Pro, 8BitDo, and any BT gamepad."}
             />
           </PanelSectionRow>
         ) : (
-          status.controllers.map((ctrl) => (
+          controllers.map((ctrl) => (
             <PanelSectionRow key={ctrl.mac}>
               <Field
                 label={ctrl.name}
@@ -200,7 +191,7 @@ const WakeOnControllerPanel: FC = () => {
         <PanelSectionRow>
           <ButtonItem
             layout="below"
-            disabled={refreshing || !status.enabled}
+            disabled={refreshing || !enabled}
             onClick={handleRefreshWakeDevices}
           >
             {refreshing ? "Refreshing..." : "Refresh Wake Devices"}
@@ -209,7 +200,7 @@ const WakeOnControllerPanel: FC = () => {
         <PanelSectionRow>
           <ButtonItem
             layout="below"
-            disabled={reconnecting || status.controllers.length === 0}
+            disabled={reconnecting || controllers.length === 0}
             onClick={handleReconnect}
           >
             {reconnecting ? "Reconnecting..." : "Reconnect Now"}
@@ -222,10 +213,10 @@ const WakeOnControllerPanel: FC = () => {
           <Field
             label=""
             description={
-              "1. Pair your Xbox controller in Steam BT settings\n" +
+              "1. Pair your controller in Steam BT settings\n" +
               "2. Enable BT Wake above\n" +
-              "3. Put the deck to sleep\n" +
-              "4. Press the Xbox button — the deck wakes and reconnects"
+              "3. Put the Deck to sleep\n" +
+              "4. Press the home button — the Deck wakes and reconnects"
             }
           />
         </PanelSectionRow>
