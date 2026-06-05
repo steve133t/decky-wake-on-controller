@@ -233,8 +233,14 @@ class Plugin:
         Returns get_status() immediately — setup runs in the background
         so sudo timeouts never delay the UI response.
         """
-        asyncio.ensure_future(self._bg_setup())
-        return await self.get_status()
+        logger.info("WakeOnController: >>> initialize() called by frontend")
+        try:
+            asyncio.ensure_future(self._bg_setup())
+        except Exception as e:
+            logger.error(f"WakeOnController: ensure_future failed: {e}")
+        result = await self.get_status()
+        logger.info(f"WakeOnController: <<< initialize() returning: {result}")
+        return result
 
     async def _bg_setup(self) -> None:
         """Run auto_setup without blocking the UI."""

@@ -2,6 +2,7 @@
   "name": "Wake on Controller",
   "version": "1.0.0",
   "author": "steve133t",
+  "api_version": 1,
   "flags": [],
   "description": "Wake your Steam Deck from sleep by pressing the home button on any Bluetooth controller — Xbox, DualSense, Switch Pro, 8BitDo, and more. Experimental USB/dongle support included.",
   "tags": ["utilities", "controller", "bluetooth", "couch gaming"]
