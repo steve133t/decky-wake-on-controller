@@ -60,12 +60,23 @@ const WakeOnControllerPanel: FC = () => {
   };
 
   useEffect(() => {
-    // First open: run initialize() so sudoers + sleep hook are set up automatically,
-    // then fall back to plain getStatus() for subsequent polls.
-    initialize().then((s) => {
-      setStatus(s);
-      setLoading(false);
-    });
+    // initialize() sets up sudoers + sleep hook then returns status in one call.
+    // If it hangs or fails for any reason, fall back to a plain getStatus().
+    const initTimeout = setTimeout(() => {
+      if (loading) refresh(); // safety net: force-load after 6s if still spinning
+    }, 6000);
+
+    initialize()
+      .then((s) => {
+        clearTimeout(initTimeout);
+        setStatus(s);
+        setLoading(false);
+      })
+      .catch(() => {
+        clearTimeout(initTimeout);
+        refresh();
+      });
+
     const interval = setInterval(refresh, 5000);
     return () => clearInterval(interval);
   }, []);

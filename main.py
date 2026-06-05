@@ -36,11 +36,15 @@ deck ALL=(root) NOPASSWD: /usr/bin/btmgmt del-device *
 """
 
 
-def _run(cmd: list[str], check=True) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, capture_output=True, text=True, check=check)
+def _run(cmd: list[str], check=True, timeout=8) -> subprocess.CompletedProcess:
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, check=check, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        logger.warning(f"WakeOnController: command timed out: {cmd}")
+        return subprocess.CompletedProcess(cmd, returncode=1, stdout="", stderr="timeout")
 
 
-def _run_root(cmd: list[str], stdin: str = "") -> subprocess.CompletedProcess:
+def _run_root(cmd: list[str], stdin: str = "", timeout=10) -> subprocess.CompletedProcess:
     """
     Run a command as root.
     - If already root (Decky may run backend as root): execute directly.
@@ -48,15 +52,21 @@ def _run_root(cmd: list[str], stdin: str = "") -> subprocess.CompletedProcess:
       For a NOPASSWD user like deck this bypasses the requiretty check
       without needing an actual password — passing an empty string is fine.
     """
-    if os.geteuid() == 0:
-        return subprocess.run(cmd, input=stdin, capture_output=True, text=True, check=False)
-    return subprocess.run(
-        ["sudo", "-S"] + cmd,
-        input=stdin,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        if os.geteuid() == 0:
+            return subprocess.run(cmd, input=stdin, capture_output=True, text=True,
+                                  check=False, timeout=timeout)
+        return subprocess.run(
+            ["sudo", "-S"] + cmd,
+            input=stdin,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning(f"WakeOnController: root command timed out: {cmd}")
+        return subprocess.CompletedProcess(cmd, returncode=1, stdout="", stderr="timeout")
 
 
 def _sysfs_write(path: str, value: str) -> bool:
@@ -114,8 +124,12 @@ class Plugin:
         """
         Called by the frontend when the panel opens.
         Idempotent — safe to call every time the UI mounts.
+        Always returns a status dict even if setup partially fails.
         """
-        await self._auto_setup(self)
+        try:
+            await self._auto_setup(self)
+        except Exception as e:
+            logger.error(f"WakeOnController: auto_setup error (non-fatal): {e}")
         return await self.get_status(self)
 
     async def get_enabled(self) -> bool:
