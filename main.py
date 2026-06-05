@@ -260,31 +260,56 @@ class Plugin:
         return {"success": ok}
 
     async def get_status(self) -> dict:
-        """Return a snapshot of everything the UI needs."""
-        # Use btmgmt/bluetoothctl for status — avoids sysfs path guessing
-        bt_show   = _run(["bluetoothctl", "show"], check=False, timeout=5)
-        bt_info   = _run(["btmgmt", "info"],        check=False, timeout=5)
+        """
+        Return a snapshot of everything the UI needs.
 
-        adapter_found = bt_show.returncode == 0 and "Controller" in bt_show.stdout
-        # btmgmt info lists active settings; "wake-system" appears when armed
+        Deliberately fast — no bluetoothctl scans here (they're slow).
+        Controller list is read from wake-devices.txt (written at enable-time)
+        rather than queried live. The Refresh button triggers a live scan.
+        """
+        # btmgmt info: fast (~0.3s), tells us adapter presence + wake state
+        bt_info = _run(["btmgmt", "info"], check=False, timeout=4)
+        adapter_found = bt_info.returncode == 0
         wakeup_armed  = "wake-system" in bt_info.stdout
-        power_ctrl    = "on" if wakeup_armed else "auto"
 
-        bt_controllers  = await self._list_bt_controllers(self)
+        # Read registered controllers from the saved file — no BT scan needed
+        registered = self._load_wake_devices(self)
+
+        # USB controllers: pure filesystem reads, no subprocess
         usb_controllers = _find_usb_controllers()
 
         return {
             "enabled":               await self.get_enabled(self),
             "adapter_found":         adapter_found,
             "wakeup_armed":          wakeup_armed,
-            "power_control":         power_ctrl,
-            "controllers":           bt_controllers,
+            "power_control":         "on" if wakeup_armed else "auto",
+            "controllers":           registered,
             "usb_controllers":       usb_controllers,
             "sleep_hook_installed":  os.path.exists(SLEEP_HOOK_PATH),
-            "wake_devices_registered": (
-                WAKE_DEVICES_PATH.exists() and WAKE_DEVICES_PATH.stat().st_size > 0
-            ),
+            "wake_devices_registered": len(registered) > 0,
         }
+
+    def _load_wake_devices(self) -> list[dict]:
+        """
+        Read controller info from wake-devices.txt — zero subprocess calls.
+
+        File format (written by _register_devices_for_wake):
+          AA:BB:CC:DD:EE:FF\tController Name
+        Legacy format (MAC only, no tab) is also handled.
+        """
+        if not WAKE_DEVICES_PATH.exists():
+            return []
+        controllers = []
+        for line in WAKE_DEVICES_PATH.read_text().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            if "\t" in line:
+                mac, name = line.split("\t", 1)
+            else:
+                mac, name = line, line   # legacy: show MAC as name
+            controllers.append({"mac": mac.strip(), "name": name.strip(), "connected": False})
+        return controllers
 
     async def get_paired_controllers(self) -> list[dict]:
         return await self._list_bt_controllers(self)
@@ -369,11 +394,12 @@ class Plugin:
             logger.warning("WakeOnController: no Xbox controllers found to register for wake")
             return False
 
-        macs = [c["mac"] for c in controllers]
-
-        # Persist MACs for the sleep hook script
+        # Persist MAC + Name for the sleep hook and fast status reads
         WAKE_DEVICES_PATH.parent.mkdir(parents=True, exist_ok=True)
-        WAKE_DEVICES_PATH.write_text("\n".join(macs) + "\n")
+        lines = [f"{c['mac']}\t{c['name']}" for c in controllers]
+        WAKE_DEVICES_PATH.write_text("\n".join(lines) + "\n")
+
+        macs = [c["mac"] for c in controllers]
 
         success = False
         for mac in macs:
@@ -468,7 +494,7 @@ case "$1" in
     #    -a 0x01 = LE Public address (the type Xbox controllers advertise on)
     #    -A 0x02 = auto-connect action (triggers wakeup when advertisement seen)
     if [ -f "$WAKE_DEVICES" ]; then
-      while IFS= read -r mac; do
+      while IFS=$'\t' read -r mac _rest; do
         [ -z "$mac" ] && continue
         btmgmt add-device -a 0x01 -A 0x02 "$mac"
       done < "$WAKE_DEVICES"
