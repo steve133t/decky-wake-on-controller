@@ -10,7 +10,13 @@ import {
 } from "@decky/ui";
 import { callable } from "@decky/api";
 import { useEffect, useState, FC } from "react";
-import { FaGamepad } from "react-icons/fa";
+
+// Inline SVG — avoids react-icons which rollup leaves as an unbundled external
+const GamepadIcon: FC = () => (
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512" width="1em" height="1em" fill="currentColor">
+    <path d="M480 96H160C71.6 96 0 167.6 0 256s71.6 160 160 160c44.8 0 85.3-18.4 114.6-48H365.4C394.7 397.6 435.2 416 480 416c88.4 0 160-71.6 160-160S568.4 96 480 96zM256 276c0 6.6-5.4 12-12 12h-52v52c0 6.6-5.4 12-12 12h-24c-6.6 0-12-5.4-12-12v-52H92c-6.6 0-12-5.4-12-12v-24c0-6.6 5.4-12 12-12h52v-52c0-6.6 5.4-12 12-12h24c6.6 0 12 5.4 12 12v52h52c6.6 0 12 5.4 12 12v24zm184 28c-17.7 0-32-14.3-32-32s14.3-32 32-32 32 14.3 32 32-14.3 32-32 32zm64-64c-17.7 0-32-14.3-32-32s14.3-32 32-32 32 14.3 32 32-14.3 32-32 32z"/>
+  </svg>
+);
 
 // ── Backend callables ─────────────────────────────────────────────────────────
 
@@ -237,6 +243,6 @@ export default definePlugin(() => ({
   name: "Wake on Controller",
   titleView: <div className={staticClasses.Title}>Wake on Controller</div>,
   content: <WakeOnControllerPanel />,
-  icon: <FaGamepad />,
+  icon: <GamepadIcon />,
   onDismount: () => {},
 }));
