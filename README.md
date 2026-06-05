@@ -4,6 +4,8 @@ A [Decky Loader](https://decky.xyz) plugin for the Steam Deck that lets you wake
 
 ## Supported controllers
 
+### Bluetooth (full support)
+
 Works with any Bluetooth controller that correctly advertises its HID device class:
 
 | Controller | Home button |
@@ -14,6 +16,12 @@ Works with any Bluetooth controller that correctly advertises its HID device cla
 | 8BitDo controllers | Home / Start |
 | Steam Controller | Steam button |
 | Any BT gamepad | Home / guide button |
+
+### USB / dongle *(experimental)*
+
+USB-connected controllers and USB dongles (e.g. Xbox wireless receiver, 8BitDo USB adapter) are detected automatically when plugged in. Wake is enabled on the USB device node via sysfs.
+
+> **Note:** USB HID wake requires the USB host controller and firmware to support it. It works on many setups but is not guaranteed on all hardware. The plugin marks this feature as experimental and will show each detected USB controller with its current wake state.
 
 ## How it works
 

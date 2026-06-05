@@ -114,6 +114,85 @@ def _sysfs_power_path(adapter_path: str, filename: str) -> str | None:
     return None
 
 
+def _find_usb_controllers() -> list[dict]:
+    """
+    Find USB/dongle-connected gamepads via /sys/class/input/js* joystick nodes.
+
+    For each joystick device that lives on the USB bus (not Bluetooth), walks
+    up the sysfs tree to find the USB device node that has a power/wakeup file.
+    That node is what we need to enable for USB HID wake.
+
+    This is experimental — not all USB hubs/controllers pass wakeup events
+    to the host, and some hardware requires BIOS/firmware support.
+    """
+    import glob as _glob
+    found = []
+    seen_wakeup_paths: set[str] = set()
+
+    for js_path in sorted(_glob.glob("/sys/class/input/js*")):
+        real = os.path.realpath(js_path)
+        # Skip Bluetooth HID devices — those are handled separately
+        if "bluetooth" in real.lower():
+            continue
+        # Only USB devices (path contains /usb or the name of a USB subsystem)
+        if "usb" not in real.lower():
+            continue
+
+        # Walk up the path to find the nearest USB device with power/wakeup
+        parts = real.rstrip("/").split("/")
+        wakeup_path = None
+        for i in range(len(parts), 0, -1):
+            candidate = "/".join(parts[:i]) + "/power/wakeup"
+            if os.path.exists(candidate):
+                wakeup_path = candidate
+                break
+
+        if not wakeup_path or wakeup_path in seen_wakeup_paths:
+            continue
+        seen_wakeup_paths.add(wakeup_path)
+
+        # Try to get a human-readable name
+        name = os.path.basename(js_path)  # fallback: "js0"
+        for name_file in [
+            f"{js_path}/device/name",
+            f"{js_path}/../name",
+        ]:
+            try:
+                name = Path(name_file).read_text().strip()
+                break
+            except Exception:
+                pass
+
+        # Check current wakeup state
+        try:
+            armed = Path(wakeup_path).read_text().strip() == "enabled"
+        except Exception:
+            armed = False
+
+        found.append({
+            "js":          os.path.basename(js_path),
+            "name":        name,
+            "wakeup_path": wakeup_path,
+            "armed":       armed,
+        })
+
+    return found
+
+
+def _enable_usb_wake(enable: bool) -> int:
+    """Enable or disable USB HID wakeup for all detected USB gamepads."""
+    value = "enabled" if enable else "disabled"
+    count = 0
+    for ctrl in _find_usb_controllers():
+        r = _run_root(["sh", "-c", f"echo {value} > {ctrl['wakeup_path']}"])
+        if r.returncode == 0:
+            count += 1
+            logger.info(f"WakeOnController: USB wake {value} for {ctrl['name']}")
+        else:
+            logger.warning(f"WakeOnController: could not set USB wake for {ctrl['name']}: {r.stderr}")
+    return count
+
+
 class Plugin:
 
     # ------------------------------------------------------------------ #
@@ -132,11 +211,12 @@ class Plugin:
 
     # Decky calls these on system suspend/resume
     async def _on_suspend(self):
-        """Re-arm BT wakeup right before the system sleeps."""
-        logger.info("WakeOnController: suspend hook — re-arming BT wake")
+        """Re-arm BT and USB wakeup right before the system sleeps."""
+        logger.info("WakeOnController: suspend hook — re-arming wake sources")
         if await self.get_enabled(self):
             await self._apply_bt_wake(self, enable=True)
             await self._register_devices_for_wake(self)
+            _enable_usb_wake(True)   # re-arm USB HID wake (experimental)
 
     async def _on_resume(self):
         """After wake: reconnect controller and clear wake scan list."""
@@ -170,6 +250,7 @@ class Plugin:
         s["enabled"] = enabled
         self._save_settings(self, s)
         ok = await self._apply_bt_wake(self, enable=enabled)
+        _enable_usb_wake(enabled)   # best-effort, experimental
         if enabled and ok:
             await self._install_sleep_hook(self)
             await self._register_devices_for_wake(self)
@@ -180,29 +261,29 @@ class Plugin:
 
     async def get_status(self) -> dict:
         """Return a snapshot of everything the UI needs."""
-        adapter_path = _adapter_sysfs_path()
-        wakeup_val = "unknown"
-        power_ctrl = "unknown"
+        # Use btmgmt/bluetoothctl for status — avoids sysfs path guessing
+        bt_show   = _run(["bluetoothctl", "show"], check=False, timeout=5)
+        bt_info   = _run(["btmgmt", "info"],        check=False, timeout=5)
 
-        if adapter_path:
-            try:
-                wp = _sysfs_power_path(adapter_path, "wakeup")
-                wakeup_val = Path(wp).read_text().strip() if wp else "unknown"
-                cp = _sysfs_power_path(adapter_path, "control")
-                power_ctrl = Path(cp).read_text().strip() if cp else "unknown"
-            except Exception:
-                pass
+        adapter_found = bt_show.returncode == 0 and "Controller" in bt_show.stdout
+        # btmgmt info lists active settings; "wake-system" appears when armed
+        wakeup_armed  = "wake-system" in bt_info.stdout
+        power_ctrl    = "on" if wakeup_armed else "auto"
 
-        controllers = await self._list_bt_controllers(self)
+        bt_controllers  = await self._list_bt_controllers(self)
+        usb_controllers = _find_usb_controllers()
 
         return {
-            "enabled": await self.get_enabled(self),
-            "adapter_found": adapter_path is not None,
-            "wakeup_armed": wakeup_val == "enabled",
-            "power_control": power_ctrl,
-            "controllers": controllers,
-            "sleep_hook_installed": os.path.exists(SLEEP_HOOK_PATH),
-            "wake_devices_registered": WAKE_DEVICES_PATH.exists() and WAKE_DEVICES_PATH.stat().st_size > 0,
+            "enabled":               await self.get_enabled(self),
+            "adapter_found":         adapter_found,
+            "wakeup_armed":          wakeup_armed,
+            "power_control":         power_ctrl,
+            "controllers":           bt_controllers,
+            "usb_controllers":       usb_controllers,
+            "sleep_hook_installed":  os.path.exists(SLEEP_HOOK_PATH),
+            "wake_devices_registered": (
+                WAKE_DEVICES_PATH.exists() and WAKE_DEVICES_PATH.stat().st_size > 0
+            ),
         }
 
     async def get_paired_controllers(self) -> list[dict]:

@@ -34,12 +34,20 @@ interface Controller {
   connected: boolean;
 }
 
+interface UsbController {
+  js: string;
+  name: string;
+  wakeup_path: string;
+  armed: boolean;
+}
+
 interface StatusResult {
   enabled: boolean;
   adapter_found: boolean;
   wakeup_armed: boolean;
   power_control: string;
   controllers: Controller[];
+  usb_controllers: UsbController[];
   sleep_hook_installed: boolean;
   wake_devices_registered: boolean;
 }
@@ -101,7 +109,8 @@ const WakeOnControllerPanel: FC = () => {
   const hookOk    = status?.sleep_hook_installed ?? false;
   const devicesOk = status?.wake_devices_registered ?? false;
   const powerCtrl = status?.power_control ?? "—";
-  const controllers = status?.controllers ?? [];
+  const controllers    = status?.controllers ?? [];
+  const usbControllers = status?.usb_controllers ?? [];
 
   return (
     <>
@@ -206,6 +215,28 @@ const WakeOnControllerPanel: FC = () => {
             {reconnecting ? "Reconnecting..." : "Reconnect Now"}
           </ButtonItem>
         </PanelSectionRow>
+      </PanelSection>
+
+      <PanelSection title="USB Controllers (experimental)">
+        {usbControllers.length === 0 ? (
+          <PanelSectionRow>
+            <Field
+              label="No USB controllers detected"
+              description="Connect a controller via USB-C and enable wake above. Not all hardware supports USB HID wake."
+            />
+          </PanelSectionRow>
+        ) : (
+          usbControllers.map((ctrl) => (
+            <PanelSectionRow key={ctrl.wakeup_path}>
+              <Field
+                label={ctrl.name}
+                description={`${ctrl.js}  •  Wake ${ctrl.armed ? "armed ✓" : "not armed"}`}
+              >
+                <StatusDot active={ctrl.armed} />
+              </Field>
+            </PanelSectionRow>
+          ))
+        )}
       </PanelSection>
 
       <PanelSection title="How it works">
