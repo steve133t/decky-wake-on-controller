@@ -1,30 +1,28 @@
-// Use IIFE format — no `import`, no `export`, no `System.register`.
-// Works in every JS execution context Decky might use (eval, script tag,
-// dynamic import, new Function — doesn't matter).
-//
-// `definePlugin` from @decky/api self-registers the plugin via
-//   window.__DECKY_SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED_deckyLoaderAPIInit
-// when it runs, so Decky doesn't need to read a module export at all.
-//
-// React, ReactDOM, and @decky/ui are provided by Decky's runtime as globals:
-//   SP_REACT, SP_REACTDOM, SP_JSX, DFL
-// so we declare them external and map them in output.globals.
-// @decky/api gets bundled in (it's a thin wrapper around window.__DECKY_SECRET_INTERNALS).
-
-import { readFileSync }  from "fs";
-import commonjs          from "@rollup/plugin-commonjs";
-import json              from "@rollup/plugin-json";
-import { nodeResolve }   from "@rollup/plugin-node-resolve";
-import replace           from "@rollup/plugin-replace";
-import typescript        from "@rollup/plugin-typescript";
-import del               from "rollup-plugin-delete";
+import { readFileSync }   from "fs";
+import commonjs           from "@rollup/plugin-commonjs";
+import json               from "@rollup/plugin-json";
+import { nodeResolve }    from "@rollup/plugin-node-resolve";
+import replace            from "@rollup/plugin-replace";
+import typescript         from "@rollup/plugin-typescript";
+import del                from "rollup-plugin-delete";
+import externalGlobals    from "rollup-plugin-external-globals";
 
 const manifest = JSON.parse(readFileSync("./plugin.json", "utf-8"));
+
+// externalGlobals rewrites imports directly in the code at build time:
+//   import React from 'react'        →  const React = SP_REACT
+//   import { X } from '@decky/ui'   →  const { X } = DFL
+//   import m from '@decky/manifest' →  const m = {"name":"Wake on Controller",...}
+//
+// This means NO module names leak into the IIFE parameter list — the
+// output is a completely self-contained (function(){ ... })() with no
+// external references that could be undefined at runtime.
 
 export default {
   input: "./src/index.tsx",
 
-  external: ["react", "react/jsx-runtime", "react-dom", "@decky/ui"],
+  // Tell rollup not to bundle these — externalGlobals handles the replacement
+  external: ["react", "react/jsx-runtime", "react-dom", "@decky/ui", "@decky/manifest"],
 
   plugins: [
     del({ targets: "./dist/*", force: true }),
@@ -32,6 +30,13 @@ export default {
     json(),
     commonjs(),
     nodeResolve({ browser: true }),
+    externalGlobals({
+      "react":             "SP_REACT",
+      "react/jsx-runtime": "SP_JSX",
+      "react-dom":         "SP_REACTDOM",
+      "@decky/ui":         "DFL",
+      "@decky/manifest":   JSON.stringify(manifest),  // inlined at build time
+    }),
     replace({
       preventAssignment: true,
       "process.env.NODE_ENV": JSON.stringify("production"),
@@ -44,12 +49,6 @@ export default {
     dir: "dist",
     format: "iife",
     name: "DeckPlugin",
-    globals: {
-      "react":             "SP_REACT",
-      "react/jsx-runtime": "SP_JSX",
-      "react-dom":         "SP_REACTDOM",
-      "@decky/ui":         "DFL",
-    },
     sourcemap: true,
   },
 };

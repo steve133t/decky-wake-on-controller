@@ -18,6 +18,7 @@
     "@types/react": "^19.1.1",
     "rollup": "^4.53.3",
     "rollup-plugin-delete": "^2.0.0",
+    "rollup-plugin-external-globals": "^0.13.0",
     "tslib": "*",
     "typescript": "^5.6.2"
   },
