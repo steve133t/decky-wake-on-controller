@@ -8,7 +8,7 @@ from pathlib import Path
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("WakeOnController")
 
-SLEEP_HOOK_PATH = "/usr/lib/systemd/system-sleep/wake-on-controller.sh"
+SLEEP_HOOK_PATH = "/etc/systemd/system-sleep/wake-on-controller.sh"
 SUDOERS_PATH = "/etc/sudoers.d/wake-on-controller"
 BT_ADAPTER = "hci0"
 
@@ -30,7 +30,6 @@ deck ALL=(root) NOPASSWD: /bin/sh -c echo * > /sys/class/bluetooth/hci0/device/p
 deck ALL=(root) NOPASSWD: /usr/bin/tee /usr/lib/systemd/system-sleep/wake-on-controller.sh
 deck ALL=(root) NOPASSWD: /bin/rm -f /usr/lib/systemd/system-sleep/wake-on-controller.sh
 deck ALL=(root) NOPASSWD: /bin/chmod +x /usr/lib/systemd/system-sleep/wake-on-controller.sh
-deck ALL=(root) NOPASSWD: /usr/bin/btmgmt wake-system *
 deck ALL=(root) NOPASSWD: /usr/bin/btmgmt add-device *
 deck ALL=(root) NOPASSWD: /usr/bin/btmgmt del-device *
 """
@@ -406,9 +405,9 @@ class Plugin:
 
         success = False
         for mac in macs:
-            # 0x01 = LE Public address type  (BLE advertisement from Xbox button press)
-            # 0x02 = auto-connect action     (kernel wakes system when device is seen)
-            r = _run_root(["btmgmt", "add-device", "-a", "0x01", "-A", "0x02", mac])
+            # -a 2 = auto-connect, -t 1 = LE Public address type
+            # btmgmt add-device requires root on SteamOS
+            r = _run_root(["btmgmt", "add-device", "-a", "2", "-t", "1", mac])
             if r.returncode == 0:
                 logger.info(f"WakeOnController: registered {mac} for BLE wake scan")
                 success = True
@@ -429,7 +428,7 @@ class Plugin:
         for mac in WAKE_DEVICES_PATH.read_text().splitlines():
             mac = mac.strip()
             if mac:
-                _run_root(["btmgmt", "del-device", mac])
+                _run_root(["btmgmt", "del-device", "-t", "1", mac])
 
         WAKE_DEVICES_PATH.unlink(missing_ok=True)
         logger.info("WakeOnController: unregistered wake devices after resume")
@@ -456,8 +455,7 @@ class Plugin:
             ctrl_path = f"{adapter_path}/power/control"
         r2 = _run_root(["sh", "-c", f"echo {power_ctrl_val} > {ctrl_path}"])
 
-        # 3. Tell btmgmt to allow wake-system (best-effort — not all kernels support it)
-        _run_root(["btmgmt", "wake-system", "on" if enable else "off"])
+        # btmgmt wake-system was removed in newer BlueZ — skip it
 
         success = (r1.returncode == 0) and (r2.returncode == 0)
         logger.info(f"WakeOnController: _apply_bt_wake({enable}) -> {success}")
@@ -469,37 +467,17 @@ class Plugin:
         the deck suspends (in case power management resets it).
         """
         script = """#!/bin/bash
-# Installed by the Wake on Controller Decky plugin
-# Runs before every suspend to keep the BT adapter armed for wake.
-#
-# Why this exists: power management can reset the sysfs wakeup flags when
-# the system suspends, so we re-apply them here at the last moment before
-# the system actually goes to sleep. We also re-register each paired Xbox
-# controller so the adapter actively scans for the BLE advertisement that
-# the controller sends when the Xbox button is pressed.
-
-SYSFS=$(ls -d /sys/class/bluetooth/hci*/device 2>/dev/null | head -1)
-[ -z "$SYSFS" ] && SYSFS=$(ls -d /sys/class/bluetooth/hci* 2>/dev/null | head -1)
+# Installed by the Wake on Controller Decky plugin.
+# Runs before every suspend. On the Steam Deck, s2idle keeps BT partially
+# active so paired controllers can wake the system natively. This hook
+# registers controllers with btmgmt as an extra guarantee.
 WAKE_DEVICES="/home/deck/.config/wake-on-controller/wake-devices.txt"
-
 case "$1" in
   pre)
-    # 1. Keep adapter powered and mark it as a wakeup source
-    if [ -n "$SYSFS" ]; then
-      echo enabled > "$SYSFS/power/wakeup" 2>/dev/null || true
-      echo on      > "$SYSFS/power/control" 2>/dev/null || true
-    fi
-
-    # 2. Allow the adapter to wake the system
-    btmgmt wake-system on
-
-    # 3. Register each paired controller for active BLE wake scanning
-    #    -a 0x01 = LE Public address (the type Xbox controllers advertise on)
-    #    -A 0x02 = auto-connect action (triggers wakeup when advertisement seen)
     if [ -f "$WAKE_DEVICES" ]; then
       while IFS=$'\t' read -r mac _rest; do
         [ -z "$mac" ] && continue
-        btmgmt add-device -a 0x01 -A 0x02 "$mac"
+        btmgmt add-device -a 2 -t 1 "$mac" 2>/dev/null || true
       done < "$WAKE_DEVICES"
     fi
     ;;
