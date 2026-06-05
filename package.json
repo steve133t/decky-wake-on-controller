@@ -1,20 +1,23 @@
 {
   "name": "decky-wake-on-controller",
   "version": "1.0.0",
-  "description": "Wake your Steam Deck from sleep by pressing the Xbox controller home button over Bluetooth",
+  "description": "Wake your Steam Deck from sleep by pressing the home button on any Bluetooth controller",
   "scripts": {
     "build": "shx rm -rf dist && rollup -c",
     "watch": "rollup -c -w"
   },
   "license": "GPL-2.0-or-later",
   "devDependencies": {
-    "@decky/rollup": "*",
     "@decky/ui": "*",
     "@decky/api": "*",
+    "@rollup/plugin-commonjs": "^25.0.0",
+    "@rollup/plugin-node-resolve": "^15.0.0",
+    "@rollup/plugin-replace": "^5.0.0",
+    "@rollup/plugin-typescript": "^11.0.0",
     "@types/react": "^17.0.0",
-    "decky-frontend-lib": "*",
     "rollup": "^3.2.3",
     "shx": "^0.3.4",
+    "tslib": "^2.6.0",
     "typescript": "^5.0.0"
   },
   "peerDependencies": {
