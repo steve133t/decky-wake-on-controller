@@ -49,6 +49,12 @@ export default {
     dir: "dist",
     format: "iife",
     name: "DeckPlugin",
+    // Decky loads plugins with:  plugin_export = new Function(bundleCode)()
+    // new Function() returns whatever the function body returns.
+    // The IIFE assigns its result to `var DeckPlugin` but doesn't return it
+    // to the caller, so new Function(code)() returns undefined.
+    // Adding this footer makes new Function(code)() return the plugin factory.
+    footer: "\nreturn DeckPlugin;",
     sourcemap: true,
   },
 };
