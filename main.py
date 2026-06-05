@@ -40,9 +40,23 @@ def _run(cmd: list[str], check=True) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, capture_output=True, text=True, check=check)
 
 
-def _run_root(cmd: list[str]) -> subprocess.CompletedProcess:
-    """Run a command as root via the Decky plugin helper."""
-    return subprocess.run(["sudo"] + cmd, capture_output=True, text=True, check=False)
+def _run_root(cmd: list[str], stdin: str = "") -> subprocess.CompletedProcess:
+    """
+    Run a command as root.
+    - If already root (Decky may run backend as root): execute directly.
+    - Otherwise use `sudo -S` which reads the password from stdin.
+      For a NOPASSWD user like deck this bypasses the requiretty check
+      without needing an actual password — passing an empty string is fine.
+    """
+    if os.geteuid() == 0:
+        return subprocess.run(cmd, input=stdin, capture_output=True, text=True, check=False)
+    return subprocess.run(
+        ["sudo", "-S"] + cmd,
+        input=stdin,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
 
 def _sysfs_write(path: str, value: str) -> bool:
@@ -189,12 +203,7 @@ class Plugin:
 
         # SteamOS deck user has NOPASSWD:ALL by default, so this sudo call
         # works without pre-existing custom rules.
-        proc = subprocess.run(
-            ["sudo", "tee", SUDOERS_PATH],
-            input=SUDOERS_CONTENT,
-            capture_output=True,
-            text=True,
-        )
+        proc = _run_root(["tee", SUDOERS_PATH], stdin=SUDOERS_CONTENT)
         if proc.returncode != 0:
             logger.error(f"WakeOnController: failed to write sudoers: {proc.stderr}")
             return False
@@ -336,12 +345,7 @@ esac
         result = _run_root(["sh", "-c", f"cat > {SLEEP_HOOK_PATH} << 'HOOK_EOF'\n{script}\nHOOK_EOF"])
         if result.returncode != 0:
             # Fallback: write via tee
-            proc = subprocess.run(
-                ["sudo", "tee", SLEEP_HOOK_PATH],
-                input=script,
-                capture_output=True,
-                text=True,
-            )
+            proc = _run_root(["tee", SLEEP_HOOK_PATH], stdin=script)
             if proc.returncode != 0:
                 logger.error(f"WakeOnController: failed to write sleep hook: {proc.stderr}")
                 return False
