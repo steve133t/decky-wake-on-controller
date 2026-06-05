@@ -202,7 +202,7 @@ class Plugin:
         logger.info("WakeOnController: loading")
         SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
         # Run setup in background so _main() returns quickly
-        asyncio.ensure_future(self._bg_setup(self))
+        asyncio.ensure_future(self._bg_setup())
 
     async def _unload(self):
         logger.info("WakeOnController: unloading")
@@ -211,17 +211,17 @@ class Plugin:
     async def _on_suspend(self):
         """Re-arm BT and USB wakeup right before the system sleeps."""
         logger.info("WakeOnController: suspend hook — re-arming wake sources")
-        if await self.get_enabled(self):
-            await self._apply_bt_wake(self, enable=True)
-            await self._register_devices_for_wake(self)
+        if await self.get_enabled():
+            await self._apply_bt_wake(enable=True)
+            await self._register_devices_for_wake()
             _enable_usb_wake(True)   # re-arm USB HID wake (experimental)
 
     async def _on_resume(self):
         """After wake: reconnect controller and clear wake scan list."""
         logger.info("WakeOnController: resume hook — reconnecting controller")
-        if await self.get_enabled(self):
-            await self._unregister_devices_for_wake(self)
-            await self._reconnect_controller(self)
+        if await self.get_enabled():
+            await self._unregister_devices_for_wake()
+            await self._reconnect_controller()
 
     # ------------------------------------------------------------------ #
     #  Public API (callable from the frontend)
@@ -233,32 +233,32 @@ class Plugin:
         Returns get_status() immediately — setup runs in the background
         so sudo timeouts never delay the UI response.
         """
-        asyncio.ensure_future(self._bg_setup(self))
-        return await self.get_status(self)
+        asyncio.ensure_future(self._bg_setup())
+        return await self.get_status()
 
     async def _bg_setup(self) -> None:
         """Run auto_setup without blocking the UI."""
         try:
-            await self._auto_setup(self)
+            await self._auto_setup()
         except Exception as e:
             logger.error(f"WakeOnController: bg setup error (non-fatal): {e}")
 
     async def get_enabled(self) -> bool:
-        s = self._load_settings(self)
+        s = self._load_settings()
         return s.get("enabled", False)
 
     async def set_enabled(self, enabled: bool) -> dict:
-        s = self._load_settings(self)
+        s = self._load_settings()
         s["enabled"] = enabled
-        self._save_settings(self, s)
-        ok = await self._apply_bt_wake(self, enable=enabled)
+        self._save_settings(s)
+        ok = await self._apply_bt_wake(enable=enabled)
         _enable_usb_wake(enabled)   # best-effort, experimental
         if enabled and ok:
-            await self._install_sleep_hook(self)
-            await self._register_devices_for_wake(self)
+            await self._install_sleep_hook()
+            await self._register_devices_for_wake()
         elif not enabled:
-            await self._unregister_devices_for_wake(self)
-            await self._remove_sleep_hook(self)
+            await self._unregister_devices_for_wake()
+            await self._remove_sleep_hook()
         return {"success": ok}
 
     async def get_status(self) -> dict:
@@ -273,8 +273,8 @@ class Plugin:
         adapter_found = len(_glob.glob("/sys/class/bluetooth/hci*")) > 0
 
         sleep_hook_ok = os.path.exists(SLEEP_HOOK_PATH)
-        registered    = self._load_wake_devices(self)
-        enabled       = await self.get_enabled(self)
+        registered    = self._load_wake_devices()
+        enabled       = await self.get_enabled()
 
         # "Wake armed" = sleep hook is installed AND controller is registered.
         # The hook re-arms btmgmt on every suspend, so if both are true,
@@ -317,7 +317,7 @@ class Plugin:
         return controllers
 
     async def get_paired_controllers(self) -> list[dict]:
-        return await self._list_bt_controllers(self)
+        return await self._list_bt_controllers()
 
     async def refresh_wake_devices(self) -> dict:
         """
@@ -325,11 +325,11 @@ class Plugin:
         Useful after pairing a new controller without needing to toggle
         the plugin off and on or wait for the next suspend.
         """
-        ok = await self._register_devices_for_wake(self)
-        return {"success": ok, "status": await self.get_status(self)}
+        ok = await self._register_devices_for_wake()
+        return {"success": ok, "status": await self.get_status()}
 
     async def test_reconnect(self) -> dict:
-        ok = await self._reconnect_controller(self)
+        ok = await self._reconnect_controller()
         return {"success": ok}
 
     # ------------------------------------------------------------------ #
@@ -342,8 +342,8 @@ class Plugin:
         Runs on plugin load and every time the panel opens so nothing falls
         through the cracks (e.g. after a SteamOS update wipes /etc/sudoers.d/).
         """
-        await self._ensure_sudoers(self)
-        await self._ensure_sleep_hook(self)
+        await self._ensure_sudoers()
+        await self._ensure_sleep_hook()
 
     async def _ensure_sudoers(self) -> bool:
         """Write the sudoers file if it doesn't exist or is out of date."""
@@ -379,7 +379,7 @@ class Plugin:
         """Install the sleep hook if it's not already in place."""
         if os.path.exists(SLEEP_HOOK_PATH):
             return True
-        return await self._install_sleep_hook(self)
+        return await self._install_sleep_hook()
 
     async def _register_devices_for_wake(self) -> bool:
         """
@@ -394,7 +394,7 @@ class Plugin:
           2. Save the MAC list to a file so the sleep hook bash script can
              re-register them on every suspend without needing Python running.
         """
-        controllers = await self._list_bt_controllers(self)
+        controllers = await self._list_bt_controllers()
         if not controllers:
             logger.warning("WakeOnController: no Xbox controllers found to register for wake")
             return False
@@ -532,7 +532,7 @@ esac
 
     async def _reconnect_controller(self) -> bool:
         """After wake, tell bluetoothctl to connect known Xbox controllers."""
-        controllers = await self._list_bt_controllers(self)
+        controllers = await self._list_bt_controllers()
         if not controllers:
             return False
         success = False
