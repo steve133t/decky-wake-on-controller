@@ -48,13 +48,15 @@ export default {
   output: {
     dir: "dist",
     format: "iife",
-    name: "DeckPlugin",
-    // Decky loads plugins with:  plugin_export = new Function(bundleCode)()
-    // new Function() returns whatever the function body returns.
-    // The IIFE assigns its result to `var DeckPlugin` but doesn't return it
-    // to the caller, so new Function(code)() returns undefined.
-    // Adding this footer makes new Function(code)() return the plugin factory.
-    footer: "\nreturn DeckPlugin;",
+    // No `name` — without a name rollup emits a bare IIFE expression:
+    //   (function () { ... return factory; }())
+    // instead of a statement:
+    //   var X = (function () { ... return factory; }())
+    //
+    // Decky loads plugins with eval(code). eval() returns the value of the
+    // last expression. A bare IIFE is an expression so eval returns whatever
+    // the IIFE returns (the plugin factory function). A var-statement is NOT
+    // an expression so eval would return undefined.
     sourcemap: true,
   },
 };
