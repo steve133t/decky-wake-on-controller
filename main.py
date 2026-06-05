@@ -78,10 +78,39 @@ def _sysfs_write(path: str, value: str) -> bool:
 
 
 def _adapter_sysfs_path() -> str | None:
-    """Resolve the sysfs path for the BT adapter (e.g. /sys/class/bluetooth/hci0/device)."""
-    base = f"/sys/class/bluetooth/{BT_ADAPTER}/device"
-    if os.path.exists(base):
-        return base
+    """
+    Find the sysfs path for the first available BT adapter.
+
+    On some hardware (e.g. Steam Deck's integrated BT) the `/device`
+    subdirectory doesn't exist — the power management files sit directly
+    under `/sys/class/bluetooth/hci0/`. Try several candidates in order.
+    """
+    import glob as _glob
+    candidates = []
+    # Prefer the explicitly configured adapter, then any other hci*
+    for hci in [BT_ADAPTER] + [p.split("/")[-1]
+                                for p in _glob.glob("/sys/class/bluetooth/hci*")
+                                if p.split("/")[-1] != BT_ADAPTER]:
+        hci_base = f"/sys/class/bluetooth/{hci}"
+        if not os.path.exists(hci_base):
+            continue
+        # Try with /device first (external USB/PCIe BT dongles)
+        device_path = f"{hci_base}/device"
+        if os.path.exists(device_path):
+            return device_path
+        # Fall back to the hci path itself (integrated BT, Steam Deck)
+        return hci_base
+    return None
+
+
+def _sysfs_power_path(adapter_path: str, filename: str) -> str | None:
+    """Return the full path to a power sysfs file, or None if it doesn't exist."""
+    for candidate in [
+        f"{adapter_path}/power/{filename}",        # hci0 direct (Steam Deck)
+        f"{adapter_path}/{filename}",               # edge case
+    ]:
+        if os.path.exists(candidate):
+            return candidate
     return None
 
 
@@ -157,8 +186,10 @@ class Plugin:
 
         if adapter_path:
             try:
-                wakeup_val = Path(f"{adapter_path}/power/wakeup").read_text().strip()
-                power_ctrl = Path(f"{adapter_path}/power/control").read_text().strip()
+                wp = _sysfs_power_path(adapter_path, "wakeup")
+                wakeup_val = Path(wp).read_text().strip() if wp else "unknown"
+                cp = _sysfs_power_path(adapter_path, "control")
+                power_ctrl = Path(cp).read_text().strip() if cp else "unknown"
             except Exception:
                 pass
 
@@ -301,12 +332,19 @@ class Plugin:
 
         value = "enabled" if enable else "disabled"
 
-        # 1. Set wakeup source
-        r1 = _run_root(["sh", "-c", f"echo {value} > {adapter_path}/power/wakeup"])
+        # 1. Set wakeup source — find the actual sysfs path first
+        wakeup_path = _sysfs_power_path(adapter_path, "wakeup")
+        if not wakeup_path:
+            # Path doesn't exist yet; try the most likely location
+            wakeup_path = f"{adapter_path}/power/wakeup"
+        r1 = _run_root(["sh", "-c", f"echo {value} > {wakeup_path}"])
 
         # 2. Prevent adapter from auto-suspending when we want wake enabled
-        power_ctrl = "on" if enable else "auto"
-        r2 = _run_root(["sh", "-c", f"echo {power_ctrl} > {adapter_path}/power/control"])
+        power_ctrl_val = "on" if enable else "auto"
+        ctrl_path = _sysfs_power_path(adapter_path, "control")
+        if not ctrl_path:
+            ctrl_path = f"{adapter_path}/power/control"
+        r2 = _run_root(["sh", "-c", f"echo {power_ctrl_val} > {ctrl_path}"])
 
         # 3. Tell btmgmt to allow wake-system (best-effort — not all kernels support it)
         _run_root(["btmgmt", "wake-system", "on" if enable else "off"])
@@ -330,15 +368,16 @@ class Plugin:
 # controller so the adapter actively scans for the BLE advertisement that
 # the controller sends when the Xbox button is pressed.
 
-SYSFS="/sys/class/bluetooth/hci0/device"
+SYSFS=$(ls -d /sys/class/bluetooth/hci*/device 2>/dev/null | head -1)
+[ -z "$SYSFS" ] && SYSFS=$(ls -d /sys/class/bluetooth/hci* 2>/dev/null | head -1)
 WAKE_DEVICES="/home/deck/.config/wake-on-controller/wake-devices.txt"
 
 case "$1" in
   pre)
     # 1. Keep adapter powered and mark it as a wakeup source
-    if [ -d "$SYSFS" ]; then
-      echo enabled > "$SYSFS/power/wakeup"
-      echo on      > "$SYSFS/power/control"
+    if [ -n "$SYSFS" ]; then
+      echo enabled > "$SYSFS/power/wakeup" 2>/dev/null || true
+      echo on      > "$SYSFS/power/control" 2>/dev/null || true
     fi
 
     # 2. Allow the adapter to wake the system
