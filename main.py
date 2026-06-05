@@ -201,9 +201,8 @@ class Plugin:
     async def _main(self):
         logger.info("WakeOnController: loading")
         SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
-        await self._auto_setup(self)
-        if await self.get_enabled(self):
-            await self._apply_bt_wake(self, enable=True)
+        # Run setup in background so _main() returns quickly
+        asyncio.ensure_future(self._bg_setup(self))
 
     async def _unload(self):
         logger.info("WakeOnController: unloading")
@@ -231,14 +230,18 @@ class Plugin:
     async def initialize(self) -> dict:
         """
         Called by the frontend when the panel opens.
-        Idempotent — safe to call every time the UI mounts.
-        Always returns a status dict even if setup partially fails.
+        Returns get_status() immediately — setup runs in the background
+        so sudo timeouts never delay the UI response.
         """
+        asyncio.ensure_future(self._bg_setup(self))
+        return await self.get_status(self)
+
+    async def _bg_setup(self) -> None:
+        """Run auto_setup without blocking the UI."""
         try:
             await self._auto_setup(self)
         except Exception as e:
-            logger.error(f"WakeOnController: auto_setup error (non-fatal): {e}")
-        return await self.get_status(self)
+            logger.error(f"WakeOnController: bg setup error (non-fatal): {e}")
 
     async def get_enabled(self) -> bool:
         s = self._load_settings(self)
