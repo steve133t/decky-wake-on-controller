@@ -43,6 +43,22 @@ def _run(cmd: list[str], check=True, timeout=8) -> subprocess.CompletedProcess:
         return subprocess.CompletedProcess(cmd, returncode=1, stdout="", stderr="timeout")
 
 
+def _connected_macs() -> set:
+    """
+    Return the set of currently-connected BT device MACs (uppercase).
+    Uses a single `bluetoothctl devices Connected` call — fast, one process,
+    regardless of how many devices are paired.
+    """
+    macs = set()
+    r = _run(["bluetoothctl", "devices", "Connected"], check=False, timeout=4)
+    for line in r.stdout.splitlines():
+        # Format: "Device AA:BB:CC:DD:EE:FF <Name>"
+        parts = line.strip().split(" ", 2)
+        if len(parts) >= 2 and parts[0] == "Device":
+            macs.add(parts[1].upper())
+    return macs
+
+
 def _run_root(cmd: list[str], stdin: str = "", timeout=10) -> subprocess.CompletedProcess:
     """
     Run a command as root.
@@ -264,8 +280,8 @@ class Plugin:
     async def get_status(self) -> dict:
         """
         Return a snapshot of everything the UI needs.
-        Zero subprocess calls — pure filesystem reads only.
-        Nothing here can block or time out.
+        Fast: filesystem reads plus one `bluetoothctl devices Connected`
+        call (single process, short timeout) for live connection state.
         """
         import glob as _glob
 
@@ -275,6 +291,12 @@ class Plugin:
         sleep_hook_ok = os.path.exists(SLEEP_HOOK_PATH)
         registered    = self._load_wake_devices()
         enabled       = await self.get_enabled()
+
+        # Mark live connection state with a single fast call.
+        # `bluetoothctl devices Connected` lists only connected devices.
+        connected = _connected_macs()
+        for c in registered:
+            c["connected"] = c["mac"].upper() in connected
 
         # "Wake armed" = sleep hook is installed AND controller is registered.
         # The hook re-arms btmgmt on every suspend, so if both are true,
