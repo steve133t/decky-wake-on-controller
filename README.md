@@ -46,20 +46,29 @@ Controller broadcasts BLE advertisement
 
 > **Requires [Decky Loader](https://decky.xyz) to be installed first.**
 
-### From the Decky Plugin Browser *(coming soon)*
+This plugin is distributed as a **manual sideload** (it is not on the official Decky store). Installing takes about a minute.
 
-Search for **"Wake on Controller"** in the Plugin Browser and hit Install.
+### Steps
 
-### Manual sideload
-
-Switch to Desktop Mode, open Konsole, and run:
+1. On the Deck: **Steam button → Power → Switch to Desktop**
+2. Open **Konsole** (the terminal app)
+3. If you've never set a password for the `deck` user, run `passwd` and set one (needed for `sudo`)
+4. Paste this and press Enter (it will ask for your password):
 
 ```bash
 curl -L https://github.com/steve133t/decky-wake-on-controller/releases/latest/download/wake-on-controller.zip \
   -o /tmp/wake-on-controller.zip && \
-unzip -o /tmp/wake-on-controller.zip -d ~/homebrew/plugins/ && \
+sudo unzip -o /tmp/wake-on-controller.zip -d /home/deck/homebrew/plugins/ && \
 sudo systemctl restart plugin_loader
 ```
+
+5. **Return to Gaming Mode** — the plugin appears under Quick Access (⚡)
+
+> The `sudo` and explicit `/home/deck/...` path matter: Decky's plugins folder is owned by root, and a bare `~` under `sudo` would resolve to `/root` instead of your home directory.
+
+### Updating
+
+Re-run the same command — it always pulls the latest release and overwrites the old version.
 
 ## Setup
 
