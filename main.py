@@ -262,30 +262,33 @@ class Plugin:
     async def get_status(self) -> dict:
         """
         Return a snapshot of everything the UI needs.
-
-        Deliberately fast — no bluetoothctl scans here (they're slow).
-        Controller list is read from wake-devices.txt (written at enable-time)
-        rather than queried live. The Refresh button triggers a live scan.
+        Zero subprocess calls — pure filesystem reads only.
+        Nothing here can block or time out.
         """
-        # btmgmt info: fast (~0.3s), tells us adapter presence + wake state
-        bt_info = _run(["btmgmt", "info"], check=False, timeout=4)
-        adapter_found = bt_info.returncode == 0
-        wakeup_armed  = "wake-system" in bt_info.stdout
+        import glob as _glob
 
-        # Read registered controllers from the saved file — no BT scan needed
-        registered = self._load_wake_devices(self)
+        # Adapter: any hci* entry in sysfs means BT hardware is present
+        adapter_found = len(_glob.glob("/sys/class/bluetooth/hci*")) > 0
 
-        # USB controllers: pure filesystem reads, no subprocess
+        sleep_hook_ok = os.path.exists(SLEEP_HOOK_PATH)
+        registered    = self._load_wake_devices(self)
+        enabled       = await self.get_enabled(self)
+
+        # "Wake armed" = sleep hook is installed AND controller is registered.
+        # The hook re-arms btmgmt on every suspend, so if both are true,
+        # wake WILL fire next time the Deck sleeps.
+        wakeup_armed = sleep_hook_ok and len(registered) > 0
+
         usb_controllers = _find_usb_controllers()
 
         return {
-            "enabled":               await self.get_enabled(self),
-            "adapter_found":         adapter_found,
-            "wakeup_armed":          wakeup_armed,
-            "power_control":         "on" if wakeup_armed else "auto",
-            "controllers":           registered,
-            "usb_controllers":       usb_controllers,
-            "sleep_hook_installed":  os.path.exists(SLEEP_HOOK_PATH),
+            "enabled":                 enabled,
+            "adapter_found":           adapter_found,
+            "wakeup_armed":            wakeup_armed,
+            "power_control":           "on" if wakeup_armed else "auto",
+            "controllers":             registered,
+            "usb_controllers":         usb_controllers,
+            "sleep_hook_installed":    sleep_hook_ok,
             "wake_devices_registered": len(registered) > 0,
         }
 
